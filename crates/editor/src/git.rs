@@ -70,6 +70,7 @@ pub trait DiffHunkDelegate {
         status: &DiffHunkStatus,
         hunk_range: Range<Anchor>,
         is_created_file: bool,
+        read_only: bool,
         line_height: Pixels,
         editor: &Entity<Editor>,
         window: &mut Window,
@@ -113,16 +114,7 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
             let Some(buffer) = hunks.buffer else {
                 continue;
             };
-            let buffer_id = buffer.read(cx).remote_id();
-            if project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .diff_base_for_buffer(buffer_id, cx)
-                .is_some()
-            {
-                continue;
-            }
+
             let ranges = hunks
                 .hunks
                 .into_iter()
@@ -153,6 +145,7 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
         status: &DiffHunkStatus,
         hunk_range: Range<Anchor>,
         is_created_file: bool,
+        read_only: bool,
         line_height: Pixels,
         editor: &Entity<Editor>,
         window: &mut Window,
@@ -163,6 +156,7 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
             status,
             hunk_range,
             is_created_file,
+            read_only,
             line_height,
             editor,
             window,
@@ -193,12 +187,22 @@ impl DiffHunkDelegate for RestoreOnlyDiffHunkDelegate {
     ) {
     }
 
+    fn restore(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
     fn render_hunk_controls(
         &self,
         _row: u32,
         _status: &DiffHunkStatus,
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
+        _read_only: bool,
         _line_height: Pixels,
         _editor: &Entity<Editor>,
         _window: &mut Window,
@@ -236,6 +240,7 @@ impl DiffHunkDelegate for RestoreOnlyUnstagedDiffHunkDelegate {
         _status: &DiffHunkStatus,
         _hunk_range: Range<Anchor>,
         _is_created_file: bool,
+        _read_only: bool,
         _line_height: Pixels,
         _editor: &Entity<Editor>,
         _window: &mut Window,
@@ -255,6 +260,7 @@ pub(super) enum DisplayDiffHunk {
         display_row: DisplayRow,
     },
     Unfolded {
+        buffer_id: BufferId,
         is_created_file: bool,
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
@@ -495,11 +501,9 @@ impl Editor {
 
             if let Some(project) = self.project.clone() {
                 self.load_diff_task = Some(
-                    update_uncommitted_diff_for_buffer(
-                        cx.entity(),
+                    self.update_uncommitted_diff_for_buffer(
                         &project,
                         self.buffer.read(cx).all_buffers(),
-                        self.buffer.clone(),
                         cx,
                     )
                     .shared(),
@@ -1775,7 +1779,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        hunks.retain(|hunks| !self.read_only_diff_buffer_ids.contains(&hunks.buffer_id));
         if hunks.is_empty() {
             return;
         }
@@ -1790,7 +1795,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        hunks.retain(|hunks| !self.read_only_diff_buffer_ids.contains(&hunks.buffer_id));
         if hunks.is_empty() {
             return;
         }
@@ -1804,7 +1810,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        hunks.retain(|hunks| !self.read_only_diff_buffer_ids.contains(&hunks.buffer_id));
         if hunks.is_empty() {
             return;
         }
@@ -2886,6 +2893,7 @@ impl EditorSnapshot {
                     let multi_buffer_range = hunk.multi_buffer_range.clone();
 
                     DisplayDiffHunk::Unfolded {
+                        buffer_id: hunk.buffer_id,
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
@@ -2946,34 +2954,16 @@ pub fn render_diff_hunk_controls(
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
     is_created_file: bool,
+    read_only: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let show_stage_restore = ProjectSettings::get_global(cx)
-        .git
-        .show_stage_restore_buttons;
-    let non_head_base = editor
-        .read(cx)
-        .project()
-        .cloned()
-        .zip(
-            editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .text_anchor_for_position(hunk_range.start, cx),
-        )
-        .is_some_and(|(project, (buffer, _))| {
-            let buffer_id = buffer.read(cx).remote_id();
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .diff_base_for_buffer(buffer_id, cx)
-                .is_some()
-        });
+    let show_stage_restore = !read_only
+        && ProjectSettings::get_global(cx)
+            .git
+            .show_stage_restore_buttons;
 
     h_flex()
         .h(line_height)
@@ -2989,7 +2979,7 @@ pub fn render_diff_hunk_controls(
         .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
-        .when(show_stage_restore && !non_head_base, |el| {
+        .when(show_stage_restore, |el| {
             el.child(if status.has_secondary_hunk() {
                 Button::new(("stage", row as u64), "Stage")
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
@@ -3148,34 +3138,67 @@ pub fn render_diff_hunk_controls(
         .into_any_element()
 }
 
-pub(super) fn update_uncommitted_diff_for_buffer(
-    editor: Entity<Editor>,
-    project: &Entity<Project>,
-    buffers: impl IntoIterator<Item = Entity<Buffer>>,
-    buffer: Entity<MultiBuffer>,
-    cx: &mut App,
-) -> Task<()> {
-    let mut tasks = Vec::new();
-    project.update(cx, |project, cx| {
-        let git_store = project.git_store().clone();
-        git_store.update(cx, |git_store, cx| {
-            for buffer in buffers {
-                if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                    tasks.push(git_store.open_display_diff(buffer.clone(), cx));
-                }
-            }
-        });
-    });
-    cx.spawn(async move |cx| {
-        let diffs = future::join_all(tasks).await;
-        if editor.read_with(cx, |editor, _cx| editor.diff_hunk_delegate.is_some()) {
-            return;
+impl Editor {
+    pub(super) fn update_uncommitted_diff_for_buffer(
+        &mut self,
+        project: &Entity<Project>,
+        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let buffers = buffers
+            .into_iter()
+            .filter(|buffer| project::File::from_dyn(buffer.read(cx).file()).is_some())
+            .collect::<Vec<_>>();
+        let generation = self.next_display_diff_generation;
+        self.next_display_diff_generation = generation.wrapping_add(1);
+        for buffer in &buffers {
+            self.display_diff_generations
+                .insert(buffer.read(cx).remote_id(), generation);
         }
 
-        buffer.update(cx, |buffer, cx| {
-            for diff in diffs.into_iter().flatten() {
-                buffer.add_diff(diff, cx);
-            }
+        let mut tasks = Vec::new();
+        project.update(cx, |project, cx| {
+            let git_store = project.git_store().clone();
+            git_store.update(cx, |git_store, cx| {
+                for buffer in buffers {
+                    tasks.push(git_store.open_display_diff(buffer, cx));
+                }
+            });
         });
-    })
+
+        let editor = cx.entity();
+        let buffer = self.buffer.clone();
+        cx.spawn(async move |_, cx| {
+            let diffs = future::join_all(tasks).await;
+            let diffs = editor.update(cx, |editor, cx| {
+                if editor.diff_hunk_delegate.is_some() {
+                    return Vec::new();
+                }
+                let mut current_diffs = Vec::new();
+                for result in diffs {
+                    let Ok((diff, read_only)) = result else {
+                        continue;
+                    };
+                    let buffer_id = diff.read(cx).buffer_id;
+                    if editor.display_diff_generations.get(&buffer_id) != Some(&generation) {
+                        continue;
+                    }
+                    if read_only {
+                        editor.read_only_diff_buffer_ids.insert(buffer_id);
+                    } else {
+                        editor.read_only_diff_buffer_ids.remove(&buffer_id);
+                    }
+                    current_diffs.push(diff);
+                }
+                cx.notify();
+                current_diffs
+            });
+
+            buffer.update(cx, |buffer, cx| {
+                for diff in diffs {
+                    buffer.add_diff(diff, cx);
+                }
+            });
+        })
+    }
 }

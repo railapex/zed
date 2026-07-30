@@ -775,6 +775,7 @@ impl DiffHunkDelegate for AgentDiffDelegate {
         status: &DiffHunkStatus,
         hunk_range: Range<editor::Anchor>,
         is_created_file: bool,
+        _read_only: bool,
         line_height: Pixels,
         editor: &Entity<Editor>,
         _window: &mut Window,

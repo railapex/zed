@@ -1278,6 +1278,7 @@ impl Project {
 
             let git_store = cx.new(|cx| {
                 GitStore::local(
+                    Some(weak_self.clone()),
                     &worktree_store,
                     buffer_store.clone(),
                     environment.clone(),
@@ -1523,6 +1524,7 @@ impl Project {
 
             let git_store = cx.new(|cx| {
                 GitStore::remote(
+                    Some(weak_self.clone()),
                     &worktree_store,
                     buffer_store.clone(),
                     remote_proto.clone(),
@@ -1794,6 +1796,7 @@ impl Project {
 
         let git_store = cx.new(|cx| {
             GitStore::remote(
+                None,
                 // In this remote case we pass None for the environment
                 &worktree_store,
                 buffer_store.clone(),
@@ -1924,6 +1927,9 @@ impl Project {
         });
 
         let weak_project = project.downgrade();
+        git_store.update(&mut cx, |git_store, cx| {
+            git_store.set_project(weak_project.clone(), cx);
+        });
         lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
                 weak_project,

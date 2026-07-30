@@ -84,6 +84,7 @@ impl DiffHunkDelegate for StagedDiffDelegate {
         status: &DiffHunkStatus,
         hunk_range: Range<editor::Anchor>,
         _is_created_file: bool,
+        _read_only: bool,
         line_height: Pixels,
         editor: &Entity<Editor>,
         _window: &mut Window,
@@ -220,7 +221,7 @@ impl StagedDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let branch_diff =
-            cx.new(|cx| DiffBufferList::new(DiffBase::Staged, project.clone(), window, cx));
+            cx.new(|cx| DiffBufferList::new(DiffBase::Staged, project.clone(), None, cx));
         let workspace_handle = workspace.downgrade();
         let diff = cx.new(|cx| {
             DiffMultibuffer::new(

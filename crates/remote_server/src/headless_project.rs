@@ -166,6 +166,7 @@ impl HeadlessProject {
 
         let git_store = cx.new(|cx| {
             let mut store = GitStore::local(
+                None,
                 &worktree_store,
                 buffer_store.clone(),
                 environment.clone(),

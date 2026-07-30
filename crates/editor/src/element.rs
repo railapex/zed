@@ -4662,6 +4662,7 @@ impl EditorElement {
 
         for (hunk, _) in display_hunks {
             if let DisplayDiffHunk::Unfolded {
+                buffer_id,
                 display_row_range,
                 multi_buffer_range,
                 status,
@@ -4669,6 +4670,10 @@ impl EditorElement {
                 ..
             } = &hunk
             {
+                let read_only = editor
+                    .read(cx)
+                    .read_only_diff_buffer_ids
+                    .contains(buffer_id);
                 if display_row_range.start >= row_range.end {
                     // hunk is fully below the viewport
                     continue;
@@ -4728,6 +4733,7 @@ impl EditorElement {
                         status,
                         multi_buffer_range.clone(),
                         *is_created_file,
+                        read_only,
                         line_height,
                         &editor,
                         window,
