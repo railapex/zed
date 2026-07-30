@@ -60,6 +60,18 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+#[cfg(target_os = "windows")]
+fn muxel_a11y_trace(message: String) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("D:/tmp/gpui-a11y-action.log")
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
@@ -1485,6 +1497,10 @@ impl Window {
                     })
                 },
                 action: Box::new(move |request| {
+                    eprintln!(
+                        "GPUI_A11Y callback action={:?} target={:?}",
+                        request.action, request.target_node
+                    );
                     action_sender.send_blocking(request).log_err();
                 }),
                 deactivation: {
@@ -1528,6 +1544,10 @@ impl Window {
             cx.foreground_executor()
                 .spawn(async move {
                     while let Ok(request) = action_receiver.recv().await {
+                        eprintln!(
+                            "GPUI_A11Y receiver action={:?} target={:?}",
+                            request.action, request.target_node
+                        );
                         handle
                             .update(&mut async_cx, |_, window, cx| {
                                 window.handle_a11y_action(request, cx);
@@ -5946,6 +5966,15 @@ impl Window {
 
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        eprintln!(
+            "GPUI_A11Y handle action={:?} target={:?} listeners={} bounds={}",
+            request.action,
+            request.target_node,
+            self.a11y
+                .action_listeners
+                .contains_key(&request.target_node),
+            self.a11y.node_bounds.contains_key(&request.target_node)
+        );
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
         if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
