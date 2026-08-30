@@ -151,7 +151,7 @@ impl WindowsWindowInner {
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
             WM_SYSKEYUP => self.handle_syskeyup_msg(wparam, lparam),
             WM_KEYUP => self.handle_keyup_msg(wparam, lparam),
-            WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
+            WM_GPUI_KEYDOWN => self.handle_keydown_msg(handle, wparam, lparam),
             WM_CHAR => self.handle_char_msg(wparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(handle),
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
@@ -426,7 +426,7 @@ impl WindowsWindowInner {
 
     // It's a known bug that you can't trigger `ctrl-shift-0`. See:
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
-    fn handle_keydown_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let Some(input) = handle_key_event(
             wparam,
             lparam,
@@ -449,6 +449,10 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
 
         self.state.callbacks.input.set(Some(func));
+
+        // GPUI key dispatch can draw and clear pending invalidation without presenting it.
+        // Service the frame request now because posted input can starve synthesized WM_PAINT.
+        self.draw_window(handle, false);
 
         if handled { Some(0) } else { Some(1) }
     }
